@@ -1,0 +1,12 @@
+{
+  "auth_mode": "trae",
+  "trae": {
+    "access_token": "test-trae-token",
+    "user_id": "test-user",
+    "expires_at": "2099-01-01T00:00:00Z",
+    "region": "CN",
+    "version": 2,
+    "login_method": "git_codebase",
+    "credential_kind": "cloud_cli_jwt"
+  }
+}

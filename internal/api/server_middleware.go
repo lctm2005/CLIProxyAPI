@@ -28,6 +28,8 @@ var corsExposedResponseHeaders = []string{
 	"Retry-After",
 	"X-Request-Id",
 	"OpenAI-Request-Id",
+	"X-TraeCLI-Mode",
+	"X-TraeCLI-Native-Fallback",
 }
 
 var corsExposedResponseHeadersJoined = strings.Join(corsExposedResponseHeaders, ", ")

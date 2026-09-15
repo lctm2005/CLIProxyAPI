@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,8 +24,9 @@ import (
 )
 
 type failOnceStreamExecutor struct {
-	mu    sync.Mutex
-	calls int
+	firstError *coreauth.Error
+	mu         sync.Mutex
+	calls      int
 }
 
 func (e *failOnceStreamExecutor) Identifier() string { return "codex" }
@@ -43,14 +43,16 @@ func (e *failOnceStreamExecutor) ExecuteStream(context.Context, *coreauth.Auth, 
 
 	ch := make(chan coreexecutor.StreamChunk, 1)
 	if call == 1 {
-		ch <- coreexecutor.StreamChunk{
-			Err: &coreauth.Error{
+		firstError := e.firstError
+		if firstError == nil {
+			firstError = &coreauth.Error{
 				Code:       "unauthorized",
 				Message:    "unauthorized",
 				Retryable:  false,
 				HTTPStatus: http.StatusUnauthorized,
-			},
+			}
 		}
+		ch <- coreexecutor.StreamChunk{Err: firstError}
 		close(ch)
 		return &coreexecutor.StreamResult{
 			Headers: http.Header{"X-Upstream-Attempt": {"1"}},
@@ -876,8 +878,8 @@ func TestExecuteStreamWithAuthManager_DoesNotRetryAfterFirstByte(t *testing.T) {
 	}
 }
 
-func TestExecuteStreamWithAuthManager_EnrichesBootstrapRetryAuthUnavailableError(t *testing.T) {
-	executor := &failOnceStreamExecutor{}
+func TestExecuteStreamWithAuthManager_ReportsBootstrapRetryTransientCooldown(t *testing.T) {
+	executor := &failOnceStreamExecutor{firstError: &coreauth.Error{Code: "request_timeout", Message: "request timed out", Retryable: true, HTTPStatus: http.StatusRequestTimeout}}
 	manager := coreauth.NewManager(nil, nil, nil)
 	manager.RegisterExecutor(executor)
 
@@ -927,18 +929,21 @@ func TestExecuteStreamWithAuthManager_EnrichesBootstrapRetryAuthUnavailableError
 		t.Fatalf("status = %d, want %d", gotErr.StatusCode, http.StatusServiceUnavailable)
 	}
 
-	var authErr *coreauth.Error
-	if !errors.As(gotErr.Error, &authErr) || authErr == nil {
-		t.Fatalf("expected coreauth.Error, got %T", gotErr.Error)
+	if !coreauth.IsSelectionUnavailable(gotErr.Error) {
+		t.Fatalf("expected selection unavailable error, got %T", gotErr.Error)
 	}
-	if authErr.Code != "auth_unavailable" {
-		t.Fatalf("code = %q, want %q", authErr.Code, "auth_unavailable")
+	errText := gotErr.Error.Error()
+	if !strings.Contains(errText, `"code":"model_unavailable"`) {
+		t.Fatalf("error missing model_unavailable code: %q", errText)
 	}
-	if !strings.Contains(authErr.Message, "providers=codex") {
-		t.Fatalf("message missing provider context: %q", authErr.Message)
+	if !strings.Contains(errText, `"provider":"codex"`) {
+		t.Fatalf("error missing provider context: %q", errText)
 	}
-	if !strings.Contains(authErr.Message, "model=test-model") {
-		t.Fatalf("message missing model context: %q", authErr.Message)
+	if !strings.Contains(errText, `"model":"test-model"`) {
+		t.Fatalf("error missing model context: %q", errText)
+	}
+	if got := gotErr.Addon.Get("Retry-After"); got == "" {
+		t.Fatal("Retry-After = empty")
 	}
 
 	if executor.Calls() != 1 {

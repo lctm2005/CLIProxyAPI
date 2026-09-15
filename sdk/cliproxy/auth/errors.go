@@ -112,6 +112,24 @@ func NewRequestScopedError(message string, httpStatus int) *Error {
 	}
 }
 
+// IsSelectionUnavailable reports whether credential selection failed because
+// no eligible credential is currently available.
+func IsSelectionUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var cooldownErr *modelCooldownError
+	if errors.As(err, &cooldownErr) && cooldownErr != nil {
+		return true
+	}
+	var authErr *Error
+	if !errors.As(err, &authErr) || authErr == nil {
+		return false
+	}
+	code := strings.TrimSpace(authErr.Code)
+	return code == "auth_not_found" || code == "auth_unavailable"
+}
+
 type errorWithCause struct {
 	base  *Error
 	cause error

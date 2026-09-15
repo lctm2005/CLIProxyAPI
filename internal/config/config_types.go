@@ -185,6 +185,55 @@ type CodexConfig struct {
 	LiveMediaRelay CodexLiveMediaRelayConfig `yaml:"live-media-relay" json:"live-media-relay"`
 }
 
+// TraeCLIConfig configures TRAE CLI execution through local auth.json or traecli exec.
+type TraeCLIConfig struct {
+	Enabled                       bool              `yaml:"enabled" json:"enabled"`
+	Mode                          string            `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Priority                      int               `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Prefix                        string            `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	AuthFile                      string            `yaml:"auth-file,omitempty" json:"auth-file,omitempty"`
+	ModelsCache                   string            `yaml:"models-cache,omitempty" json:"models-cache,omitempty"`
+	BaseURL                       string            `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+	AppID                         string            `yaml:"app-id,omitempty" json:"app-id,omitempty"`
+	Function                      string            `yaml:"function,omitempty" json:"function,omitempty"`
+	BackendVariant                string            `yaml:"backend-variant,omitempty" json:"backend-variant,omitempty"`
+	IncludeCacheModels            bool              `yaml:"include-cache-models,omitempty" json:"include-cache-models,omitempty"`
+	PresetFile                    string            `yaml:"preset-file,omitempty" json:"preset-file,omitempty"`
+	NativeFallbackToExec          bool              `yaml:"native-fallback-to-exec,omitempty" json:"native-fallback-to-exec,omitempty"`
+	NativeFallbackCooldownSeconds int               `yaml:"native-fallback-cooldown-seconds,omitempty" json:"native-fallback-cooldown-seconds,omitempty"`
+	ExecPath                      string            `yaml:"exec-path,omitempty" json:"exec-path,omitempty"`
+	ExecWorkDir                   string            `yaml:"exec-workdir,omitempty" json:"exec-workdir,omitempty"`
+	ExecSandbox                   string            `yaml:"exec-sandbox,omitempty" json:"exec-sandbox,omitempty"`
+	ExecPermission                string            `yaml:"exec-permission-mode,omitempty" json:"exec-permission-mode,omitempty"`
+	ExecExtraArgs                 []string          `yaml:"exec-extra-args,omitempty" json:"exec-extra-args,omitempty"`
+	ExecEnv                       map[string]string `yaml:"exec-env,omitempty" json:"exec-env,omitempty"`
+	ExecInheritShellEnv           bool              `yaml:"exec-inherit-shell-env,omitempty" json:"exec-inherit-shell-env,omitempty"`
+	ExecShell                     string            `yaml:"exec-shell,omitempty" json:"exec-shell,omitempty"`
+	Models                        []TraeCLIModel    `yaml:"models,omitempty" json:"models,omitempty"`
+	ExcludedModels                []string          `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
+	DisableCooling                bool              `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
+	Headers                       map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+// TraeCLIModel describes a TRAE CLI model alias and optional raw backend model id.
+type TraeCLIModel struct {
+	Name          string            `yaml:"name" json:"name"`
+	Alias         string            `yaml:"alias" json:"alias"`
+	Aliases       []string          `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	AliasNames    map[string]string `yaml:"alias-names,omitempty" json:"alias-names,omitempty"`
+	ModelName     string            `yaml:"model-name,omitempty" json:"model-name,omitempty"`
+	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
+	ContextWindow int               `yaml:"context-window,omitempty" json:"context-window,omitempty"`
+}
+
+func (m TraeCLIModel) GetName() string                        { return m.Name }
+func (m TraeCLIModel) GetAlias() string                       { return m.Alias }
+func (m TraeCLIModel) GetForceMapping() bool                  { return false }
+func (m TraeCLIModel) GetDisplayName() string                 { return "" }
+func (m TraeCLIModel) GetDescription() string                 { return m.Description }
+func (m TraeCLIModel) GetThinking() *registry.ThinkingSupport { return nil }
+func (m TraeCLIModel) GetMaxContextLength() int               { return m.ContextWindow }
+
 // CodexLiveMediaRelayConfig configures the in-process Codex Live WebRTC gateway.
 type CodexLiveMediaRelayConfig struct {
 	Enabled                 bool                 `yaml:"enabled" json:"enabled"`

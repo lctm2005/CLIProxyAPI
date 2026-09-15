@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/tidwall/gjson"
 )
 
@@ -75,6 +78,45 @@ func TestWriteClaudeErrorResponseUsesClaudeEnvelope(t *testing.T) {
 	}
 	if got := gjson.GetBytes(body, "error.message").String(); got != "Your input exceeds the context window of this model. Please adjust your input and try again." {
 		t.Fatalf("error.message = %q; body=%s", got, body)
+	}
+}
+
+func TestWriteClaudeTransientCooldownIncludesRetryAfter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const model = "transient-model"
+	_, errPick := (&coreauth.FillFirstSelector{}).Pick(
+		context.Background(),
+		"traecli",
+		model,
+		cliproxyexecutor.Options{},
+		[]*coreauth.Auth{{
+			ID: "transient",
+			ModelStates: map[string]*coreauth.ModelState{
+				model: {
+					Status:         coreauth.StatusError,
+					Unavailable:    true,
+					NextRetryAfter: time.Now().Add(time.Minute),
+				},
+			},
+		}},
+	)
+	if errPick == nil {
+		t.Fatal("Pick() error = nil")
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	handler := NewClaudeCodeAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil))
+	handler.WriteErrorResponse(c, handlers.ExecutionErrorMessage(errPick))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if got := recorder.Header().Get("Retry-After"); got == "" {
+		t.Fatal("Retry-After = empty")
+	}
+	if got := gjson.GetBytes(recorder.Body.Bytes(), "error.type").String(); got != "api_error" {
+		t.Fatalf("error.type = %q, want api_error; body=%s", got, recorder.Body.Bytes())
 	}
 }
 

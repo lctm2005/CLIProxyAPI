@@ -9,6 +9,7 @@ config.yaml
 # Generated content
 bin/*
 /logs
+.cli-proxy-api/
 conv/*
 temp/*
 refs/*
@@ -60,9 +61,11 @@ _bmad-output/*
 .DS_Store
 ._*
 
+# One-click TRAE proxy runtime
+.trae-proxy/
+
 # docker
 docker-compose.override.yml
-
 
 # Local LLM Wiki vault
 .llm-wiki

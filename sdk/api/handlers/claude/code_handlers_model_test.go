@@ -17,7 +17,7 @@ func TestClaudeModelsResponseUsesConfiguredDisplayName(t *testing.T) {
 	const modelID = "claude-display-name-catalog-test"
 	registryRef := registry.GetGlobalRegistry()
 	registryRef.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
-		ID: modelID, Object: "model", OwnedBy: "test", DisplayName: "Configured Claude Name",
+		ID: modelID, Object: "model", OwnedBy: "test", DisplayName: "Configured Claude Name", Description: "Configured Claude Description",
 	}})
 	t.Cleanup(func() {
 		registryRef.UnregisterClient(clientID)
@@ -31,6 +31,7 @@ func TestClaudeModelsResponseUsesConfiguredDisplayName(t *testing.T) {
 		Data []struct {
 			ID          string `json:"id"`
 			DisplayName string `json:"display_name"`
+			Description string `json:"description"`
 		} `json:"data"`
 	}
 	if errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &response); errUnmarshal != nil {
@@ -40,6 +41,9 @@ func TestClaudeModelsResponseUsesConfiguredDisplayName(t *testing.T) {
 		if model.ID == modelID {
 			if model.DisplayName != "Configured Claude Name" {
 				t.Fatalf("display_name = %q, want Configured Claude Name", model.DisplayName)
+			}
+			if model.Description != "Configured Claude Description" {
+				t.Fatalf("description = %q, want Configured Claude Description", model.Description)
 			}
 			return
 		}

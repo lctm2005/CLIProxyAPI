@@ -110,6 +110,11 @@ func (NoopHook) OnAuthUpdated(context.Context, *Auth) {}
 // OnResult implements Hook.
 func (NoopHook) OnResult(context.Context, Result) {}
 
+type resultGenerationKey struct {
+	authID string
+	model  string
+}
+
 // Manager orchestrates auth lifecycle, selection, execution, and persistence.
 type Manager struct {
 	store                     Store
@@ -121,9 +126,14 @@ type Manager struct {
 	mu                        sync.RWMutex
 	selectorMu                sync.Mutex
 	configCooldownMu          sync.Mutex
-	auths                     map[string]*Auth
-	authEpochs                map[string]uint64
-	scheduler                 *authScheduler
+	// modelCatalogMu orders catalog/auth changes after in-flight result side effects.
+	modelCatalogMu       sync.RWMutex
+	modelCatalogSequence uint64
+	modelCatalogVersions map[string]uint64
+	removedCatalogModels map[string]map[string]struct{}
+	authEpochs           map[string]uint64
+	auths                map[string]*Auth
+	scheduler            *authScheduler
 	// pluginScheduler runs outside m.mu before falling back to native selection.
 	pluginScheduler PluginScheduler
 	// homeRuntimeAuths retains legacy session auth lookups for non-execution callers.
@@ -143,6 +153,11 @@ type Manager struct {
 	requestRetry        atomic.Int32
 	maxRetryCredentials atomic.Int32
 	maxRetryInterval    atomic.Int64
+	resultGeneration    atomic.Uint64
+	// Result generation watermarks are guarded by mu and kept outside exported SDK structs.
+	resultGenerationWatermarks map[resultGenerationKey]uint64
+	resultAuthWatermarks       map[string]uint64
+	resultCredentialWatermarks map[string]uint64
 
 	// oauthModelAlias stores global OAuth model alias mappings (alias -> upstream name) keyed by channel.
 	oauthModelAlias atomic.Value
@@ -181,17 +196,20 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		hook = NoopHook{}
 	}
 	manager := &Manager{
-		store:                 store,
-		executors:             make(map[string]ProviderExecutor),
-		selector:              selector,
-		hook:                  hook,
-		auths:                 make(map[string]*Auth),
-		authEpochs:            make(map[string]uint64),
-		homeRuntimeAuths:      make(map[string]map[string]*Auth),
-		homeRuntimeAuthOwners: make(map[string]map[string]*HomeDispatchSelection),
-		homeSessionSelections: make(map[string]map[homeSessionSelectionKey]*HomeDispatchSelection),
-		providerOffsets:       make(map[string]int),
-		modelPoolOffsets:      make(map[string]int),
+		store:                      store,
+		executors:                  make(map[string]ProviderExecutor),
+		selector:                   selector,
+		hook:                       hook,
+		auths:                      make(map[string]*Auth),
+		homeRuntimeAuths:           make(map[string]map[string]*Auth),
+		homeRuntimeAuthOwners:      make(map[string]map[string]*HomeDispatchSelection),
+		homeSessionSelections:      make(map[string]map[homeSessionSelectionKey]*HomeDispatchSelection),
+		providerOffsets:            make(map[string]int),
+		modelPoolOffsets:           make(map[string]int),
+		resultGenerationWatermarks: make(map[resultGenerationKey]uint64),
+		resultAuthWatermarks:       make(map[string]uint64),
+		resultCredentialWatermarks: make(map[string]uint64),
+		authEpochs:                 make(map[string]uint64),
 	}
 	// atomic.Value requires non-nil initial value.
 	manager.runtimeConfig.Store(&internalconfig.Config{})
@@ -202,4 +220,11 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 	}
 	manager.scheduler = newAuthScheduler(selector)
 	return manager
+}
+
+func (m *Manager) nextResultGeneration() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.resultGeneration.Add(1)
 }
