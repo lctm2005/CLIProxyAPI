@@ -1401,6 +1401,7 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 			resultModel := m.stateModelForExecution(c.auth, routeModel, upstreamModel, pooled)
 			execReq := req
 			execReq.Model = upstreamModel
+			attemptGeneration := m.nextResultGeneration()
 			creditsCtx = syncMetadataSessionToContext(creditsCtx, creditsOpts.Metadata)
 			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)
 			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: creditsOpts}
@@ -1412,13 +1413,13 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 				if isCredentialScopedError(errExec) {
 					result.CredentialScope = true
 				}
-				m.MarkResult(creditsCtx, result)
+				m.markResult(creditsCtx, result, attemptGeneration)
 				if result.CredentialScope {
 					break
 				}
 				continue
 			}
-			m.MarkResult(creditsCtx, result)
+			m.markResult(creditsCtx, result, attemptGeneration)
 			attemptAliasResult := resolveAttemptAliasResult(routing, c.auth, routeModel, upstreamModel, aliasResult)
 			rewriteForceMappedResponse(&resp, attemptAliasResult)
 			return resp, true, nil

@@ -7,6 +7,36 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
+func TestComputeTraeCLIModelsHashIncludesNormalizedAliases(t *testing.T) {
+	base := []config.TraeCLIModel{{Name: "GPT-5.4", Alias: "gpt-5.4", ModelName: "gpt-5.4__max"}}
+	withAliases := []config.TraeCLIModel{{
+		Name: "GPT-5.4", Alias: "gpt-5.4", ModelName: "gpt-5.4__max",
+		Aliases: []string{" claude-haiku-4-5 ", "CLAUDE-HAIKU-4-5", ""},
+	}}
+	reordered := []config.TraeCLIModel{{
+		Name: "GPT-5.4", Alias: "gpt-5.4", ModelName: "gpt-5.4__max",
+		Aliases: []string{"claude-haiku-4-5"},
+	}}
+
+	baseHash := ComputeTraeCLIModelsHash(base)
+	aliasesHash := ComputeTraeCLIModelsHash(withAliases)
+	if baseHash == aliasesHash {
+		t.Fatal("adding a canonical alias must change the Trae model hash")
+	}
+	if aliasesHash != ComputeTraeCLIModelsHash(reordered) {
+		t.Fatal("alias whitespace, case, duplicates, and order must not change the Trae model hash")
+	}
+
+	withNames := []config.TraeCLIModel{{
+		Name: "GPT-5.4", Alias: "gpt-5.4", ModelName: "gpt-5.4__max",
+		Aliases:    []string{"claude-haiku-4-5"},
+		AliasNames: map[string]string{"claude-haiku-4-5": "Claude Haiku (内部)"},
+	}}
+	if aliasesHash == ComputeTraeCLIModelsHash(withNames) {
+		t.Fatal("changing an alias display name must change the Trae model hash")
+	}
+}
+
 func TestComputeOpenAICompatModelsHash_Deterministic(t *testing.T) {
 	models := []config.OpenAICompatibilityModel{
 		{Name: "gpt-4", Alias: "gpt4"},

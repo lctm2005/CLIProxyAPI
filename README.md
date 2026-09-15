@@ -1,3 +1,9 @@
+> **Fork notice**
+>
+> This fork is based on [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) and adds a TRAE CLI provider with Claude Code and Codex compatibility. See [TRAE Quickstart and Operations](TRAE_DEPLOY_CN.md).
+
+---
+
 # CLI Proxy API
 
 English | [中文](README_CN.md) | [日本語](README_JA.md)
@@ -109,7 +115,7 @@ PackyCode provides special discounts for our software users: register using <a h
 - OpenAI Codex support (GPT models) via OAuth login
 - Claude Code support via OAuth login
 - Grok Build support via OAuth login
-- Trae CLI support by importing an existing local Trae login
+- TRAE CLI support through an existing local login
 - Streaming, non-streaming, and WebSocket responses where supported
 - Function calling/tools support
 - Multimodal input support (text and images)
@@ -127,17 +133,17 @@ PackyCode provides special discounts for our software users: register using <a h
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
 
-### Trae CLI
+### TRAE CLI
 
-Import the account already logged in by your local `traecli`, then start the proxy normally:
+With TRAE CLI 2.0 already installed, the helper configures and starts an isolated local proxy. The client helper can then configure Claude Code or Codex without copying the proxy API key into their settings:
 
 ```bash
 traecli login status
-./CLIProxyAPI --trae-login
-./CLIProxyAPI --config config.yaml
+./trae-quickstart.sh
+./trae-client-setup.sh claude
 ```
 
-The import stores only references to Trae CLI's local state and its model catalog; it does not copy the access token into CLIProxyAPI's auth file. By default it discovers `traecli` on `PATH` and reads `~/.trae/cli/auth.json`. Custom installations can use `TRAECLI_PATH`, `TRAE_HOME`, `TRAE_AUTH_PATH`, and `TRAE_MODELS_PATH`; `TRAE_API_BASE_URL` overrides the upstream endpoint.
+See [TRAE Quickstart and Operations](TRAE_DEPLOY_CN.md) for native/exec modes, model discovery, systemd deployment, and client configuration.
 
 ## Management API
 

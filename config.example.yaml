@@ -299,6 +299,37 @@ codex:
     #     username: "user"
     #     credential: "secret"
 
+# TRAE CLI account provider.
+# Supports two modes:
+# - native: uses the local TRAE CLI login state and raw-chat API directly.
+# - exec: forwards each request through `traecli exec`, which is slower but follows TRAE CLI's own path.
+# Requires `traecli login` to have created ~/.trae/cli/auth.json.
+# traecli:
+#   enabled: false
+#   mode: "native" # native or exec
+#   auth-file: "~/.trae/cli/auth.json"
+#   models-cache: "~/.trae/cli/models_cache.json"
+#   base-url: "https://copilot-cn.bytedance.net"
+#   backend-variant: "max" # optional preferred cache variant; falls back to standard when max is unavailable
+#   include-cache-models: true # merge supported cache models with explicit model overrides and aliases
+#   preset-file: "" # optional: full raw-chat body captured from traecli; preserves native context/tools and replaces the last user input
+#   native-fallback-to-exec: true # native mode only; fall back to traecli exec on upstream risk-control/rate-limit/server errors
+#   native-fallback-cooldown-seconds: 300 # keep using exec for this long after a native fallback trigger
+#   exec-path: "traecli" # exec mode only
+#   exec-workdir: "" # exec mode only; defaults to the CLIProxyAPI working directory
+#   exec-sandbox: "read-only" # exec mode only
+#   exec-permission-mode: "" # exec mode only; e.g. plan or bypass_permissions
+#   exec-extra-args: [] # exec mode only; appended before stdin prompt marker
+#   exec-inherit-shell-env: false # exec mode only; merge `$SHELL -lic 'env -0'` before exec-env
+#   exec-shell: "" # exec mode only; defaults to $SHELL, then /bin/sh
+#   exec-env: {} # exec mode only; environment overrides, e.g. PATH: "/usr/local/go/bin:${PATH}"
+#   models: # optional; when omitted, models are read from models-cache
+#     - name: "gpt-5.5"
+#       alias: "trae-gpt-5.5"
+#       aliases: # optional additional public model IDs routed to the same backend
+#         - "claude-sonnet-5"
+#       model-name: "gpt-5.5__max"
+
 # Antigravity provider behavior.
 # antigravity:
 #   sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions
@@ -710,7 +741,7 @@ nonstream-keepalive-interval: 0
 
 # Global OAuth model name aliases (per channel)
 # These aliases rename model IDs for both model listing and request routing.
-# Supported channels: vertex, aistudio, antigravity, claude, codex, kimi, trae, xai.
+# Supported channels: vertex, aistudio, antigravity, claude, codex, kimi, xai.
 # NOTE: Aliases do not apply to gemini-api-key, interactions-api-key, codex-api-key, xai-api-key, claude-api-key, openai-compatibility, or vertex-api-key.
 # NOTE: Because aliases affect the merged /v1 model list and merged request routing, overlapping
 # client-visible names can become ambiguous across providers. For strict backend pinning, use

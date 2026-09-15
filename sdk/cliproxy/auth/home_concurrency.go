@@ -278,8 +278,8 @@ func verifyAccountedHomeConcurrencyIdentity(tuple homeConcurrencyTuple, auth *Au
 	return nil
 }
 
-// SafeResponseHeaders returns trusted response headers only for concrete
-// retry/cooldown errors.
+// SafeResponseHeaders returns trusted retry/cooldown headers. Upstream retry
+// hints are rendered from durations, without forwarding arbitrary headers.
 func SafeResponseHeaders(err error) http.Header {
 	var busy *HomeConcurrencyBusyError
 	if errors.As(err, &busy) && busy != nil {
@@ -304,6 +304,14 @@ func SafeResponseHeaders(err error) http.Header {
 	var modelCooldown *modelCooldownError
 	if errors.As(err, &modelCooldown) && modelCooldown != nil {
 		return modelCooldown.Headers()
+	}
+	if status := statusCodeFromError(err); status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+		if retryAfter := retryAfterFromError(err); retryAfter != nil && *retryAfter >= 0 {
+			if *retryAfter == 0 {
+				return http.Header{"Retry-After": []string{"0"}}
+			}
+			return safeRetryAfterHeader(*retryAfter)
+		}
 	}
 	return nil
 }

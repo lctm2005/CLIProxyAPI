@@ -553,17 +553,21 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 
 // isAnthropicModelsRequest reports whether a /v1/models request should be served in
 // Anthropic format. Anthropic API clients send the Anthropic-Version header; Claude
-// Code additionally uses a claude-cli User-Agent.
+// Code may request models with only x-api-key or a Claude-flavoured User-Agent.
 func isAnthropicModelsRequest(c *gin.Context) bool {
 	if c.GetHeader("Anthropic-Version") != "" {
 		return true
 	}
-	return strings.HasPrefix(c.GetHeader("User-Agent"), "claude-cli")
+	if c.GetHeader("X-Api-Key") != "" {
+		return true
+	}
+	userAgent := strings.ToLower(c.GetHeader("User-Agent"))
+	return strings.Contains(userAgent, "claude-cli") || strings.Contains(userAgent, "claude-code")
 }
 
 // unifiedModelsHandler creates a unified handler for the /v1/models endpoint
 // that routes to different handlers based on the request.
-// Anthropic API requests (Anthropic-Version header, or a claude-cli User-Agent)
+// Anthropic API requests (Anthropic-Version header, x-api-key, or a Claude User-Agent)
 // route to the Claude handler, otherwise they route to the OpenAI handler.
 func (s *Server) unifiedModelsHandler(openaiHandler *openai.OpenAIAPIHandler, claudeHandler *claude.ClaudeCodeAPIHandler) gin.HandlerFunc {
 	return func(c *gin.Context) {

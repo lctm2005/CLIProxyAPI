@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	logs "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 )
 
 // SetRetryConfig updates additional credential retry rounds, the per-round credential limit, and the cooldown wait interval.
@@ -100,6 +101,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
 	}
 	auth.EnsureIndex()
+	m.modelCatalogMu.Lock()
 	m.mu.Lock()
 	if m.authEpochs == nil {
 		m.authEpochs = make(map[string]uint64)
@@ -115,6 +117,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	auth.Generation = 1
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
+	m.bumpModelCatalogVersionLocked(auth.ID)
 	m.mu.Unlock()
 	if !shouldDeferAPIKeyModelAliasRebuild(ctx) {
 		m.rebuildAPIKeyModelAliasFromRuntimeConfig()
@@ -122,6 +125,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone.Clone())
 	}
+	m.modelCatalogMu.Unlock()
 	m.queueRefreshReschedule(auth.ID)
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthRegistered(ctx, auth.Clone())
@@ -164,10 +168,12 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	if errWeight := ValidateAuthWeight(auth); errWeight != nil {
 		return nil, fmt.Errorf("update auth: %w", errWeight)
 	}
+	m.modelCatalogMu.Lock()
 	m.mu.Lock()
 	existing, ok := m.auths[auth.ID]
 	if !ok || existing == nil {
 		m.mu.Unlock()
+		m.modelCatalogMu.Unlock()
 		return nil, nil
 	}
 	if m.authEpochs == nil {
@@ -178,7 +184,10 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	}
 	if (mode == updateModeRefresh || mode == updateModePrepare) && base != nil && existing.RegistrationEpoch != base.RegistrationEpoch {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("update auth %s: stale registration epoch %d != %d", auth.ID, base.RegistrationEpoch, existing.RegistrationEpoch)
+		m.modelCatalogMu.Unlock()
+		errStale := fmt.Errorf("update auth %s: stale registration epoch %d != %d", auth.ID, base.RegistrationEpoch, existing.RegistrationEpoch)
+		logs.CtxError(ctx, "%v", errStale)
+		return nil, errStale
 	}
 	if mode == updateModeRefresh {
 		merged := MergeRefreshedAuth(base, existing, auth)
@@ -195,7 +204,10 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	}
 	if auth.RegistrationEpoch != 0 && auth.RegistrationEpoch < m.authEpochs[auth.ID] {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("update auth %s: stale registration epoch %d < %d", auth.ID, auth.RegistrationEpoch, m.authEpochs[auth.ID])
+		m.modelCatalogMu.Unlock()
+		errStale := fmt.Errorf("update auth %s: stale registration epoch %d < %d", auth.ID, auth.RegistrationEpoch, m.authEpochs[auth.ID])
+		logs.CtxError(ctx, "%v", errStale)
+		return nil, errStale
 	}
 	if auth.RegistrationEpoch >= m.authEpochs[auth.ID] {
 		m.authEpochs[auth.ID] = auth.RegistrationEpoch
@@ -236,6 +248,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	auth.EnsureIndex()
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
+	m.bumpModelCatalogVersionLocked(auth.ID)
 	m.mu.Unlock()
 	if !shouldDeferAPIKeyModelAliasRebuild(ctx) {
 		m.rebuildAPIKeyModelAliasFromRuntimeConfig()
@@ -243,6 +256,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone.Clone())
 	}
+	m.modelCatalogMu.Unlock()
 	m.queueRefreshReschedule(auth.ID)
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
@@ -264,14 +278,18 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 	}
 	_ = ctx
 
+	m.modelCatalogMu.Lock()
 	m.mu.Lock()
 	existing := m.auths[id]
 	if existing == nil {
 		m.mu.Unlock()
+		m.modelCatalogMu.Unlock()
 		return
 	}
 	provider := strings.TrimSpace(existing.Provider)
 	delete(m.auths, id)
+	delete(m.modelCatalogVersions, id)
+	delete(m.removedCatalogModels, id)
 	if m.modelPoolOffsets != nil {
 		delete(m.modelPoolOffsets, id)
 	}
@@ -300,6 +318,7 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 	if m.scheduler != nil {
 		m.scheduler.RecordRemovalTombstone(id, tombstoneEpoch)
 	}
+	m.modelCatalogMu.Unlock()
 	m.queueRefreshUnschedule(id)
 	m.invalidateSessionAffinity(id)
 
@@ -325,6 +344,8 @@ func (m *Manager) invalidateSessionAffinity(authID string) {
 
 // Load resets manager state from the backing store.
 func (m *Manager) Load(ctx context.Context) error {
+	m.modelCatalogMu.Lock()
+	defer m.modelCatalogMu.Unlock()
 	m.mu.Lock()
 	if m.store == nil {
 		m.mu.Unlock()
@@ -337,6 +358,8 @@ func (m *Manager) Load(ctx context.Context) error {
 	}
 	previousAuths := m.auths
 	m.auths = make(map[string]*Auth, len(items))
+	m.modelCatalogVersions = make(map[string]uint64, len(items))
+	m.removedCatalogModels = nil
 	if m.authEpochs == nil {
 		m.authEpochs = make(map[string]uint64, len(items))
 	}
@@ -353,6 +376,7 @@ func (m *Manager) Load(ctx context.Context) error {
 		auth.RegistrationEpoch = m.authEpochs[auth.ID]
 		auth.Generation = 1
 		m.auths[auth.ID] = auth.Clone()
+		m.bumpModelCatalogVersionLocked(auth.ID)
 	}
 
 	type removalTombstone struct {

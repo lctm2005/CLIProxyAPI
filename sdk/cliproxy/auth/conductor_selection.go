@@ -131,6 +131,8 @@ func (m *Manager) RefreshSchedulerEntry(authID string) {
 	if m == nil || m.scheduler == nil || authID == "" {
 		return
 	}
+	m.modelCatalogMu.RLock()
+	defer m.modelCatalogMu.RUnlock()
 	m.mu.RLock()
 	auth, ok := m.auths[authID]
 	if !ok || auth == nil {
@@ -171,6 +173,8 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 		return
 	}
 
+	m.modelCatalogMu.Lock()
+	defer m.modelCatalogMu.Unlock()
 	globalReg := registry.GetGlobalRegistry()
 	var (
 		snapshot             *Auth
@@ -304,6 +308,9 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 			}
 
 			if globalReg.ClientRegistrationEpoch(authID) == regEpoch {
+				for modelKey := range supported {
+					delete(m.removedCatalogModels[authID], modelKey)
+				}
 				auth.ModelStates = candidateAuth.ModelStates
 				if candidateChanged {
 					updateAggregatedAvailability(auth, now)
@@ -525,6 +532,7 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 
 	availableByPriority := make(map[int][]*Auth)
 	cooldownCount := 0
+	transientCooldownCount := 0
 	unauthorizedCount := 0
 	var earliest time.Time
 	for _, candidate := range auths {
@@ -535,8 +543,11 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 			availableByPriority[priority] = append(availableByPriority[priority], candidate)
 			continue
 		}
-		if reason == blockReasonCooldown {
+		if reason == blockReasonCooldown || reason == blockReasonTransientCooldown {
 			cooldownCount++
+			if reason == blockReasonTransientCooldown {
+				transientCooldownCount++
+			}
 			if !next.IsZero() && (earliest.IsZero() || next.Before(earliest)) {
 				earliest = next
 			}
@@ -560,6 +571,11 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 			resetIn := earliest.Sub(now)
 			if resetIn < 0 {
 				resetIn = 0
+			}
+			if transientCooldownCount > 0 {
+				err := newTransientModelCooldownError(routeModel, providerForError, resetIn)
+				err.cause = lastCandidateErr
+				return nil, err
 			}
 			return nil, newModelCooldownErrorWithCause(routeModel, providerForError, resetIn, lastCandidateErr)
 		}
@@ -634,7 +650,9 @@ func restoreModelCooldownErrorModel(err error, requestedModel string) error {
 	if !errors.As(err, &cooldownErr) || cooldownErr == nil || cooldownErr.model != "" {
 		return err
 	}
-	return newModelCooldownErrorWithCause(requestedModel, cooldownErr.provider, cooldownErr.resetIn, cooldownErr.cause)
+	restored := *cooldownErr
+	restored.model = requestedModel
+	return &restored
 }
 
 func latestUnauthorizedCandidateError(auths []*Auth) error {

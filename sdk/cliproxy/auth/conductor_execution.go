@@ -513,6 +513,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		}
 		attempted[auth.ID] = struct{}{}
 		var errPrepare error
+		prepareGeneration := m.nextResultGeneration()
 		auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
 		if errPrepare != nil {
 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errPrepare); errCancel != nil {
@@ -523,7 +524,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				stateModel = canonicalModelKey(routeModel)
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: stateModel, RouteModel: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts}
-			m.MarkResult(execCtx, result)
+			m.markResult(execCtx, result, prepareGeneration)
 			lastErr = errPrepare
 			continue
 		}
@@ -566,6 +567,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if !restoreExecutionModel {
 				execReq = attachResolvedAPIKeyModelInfo(routing, execReq, auth, routeModel, upstreamModel)
 			}
+			attemptGeneration := m.nextResultGeneration()
 			execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 			startExec := time.Now()
 			resp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)
@@ -582,6 +584,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				if refreshed, okRefresh := m.tryRefreshAfterUnauthorized(refreshCtx, auth, errExec, didRefreshOnUnauthorized); okRefresh {
 					auth = refreshed
 					didRefreshOnUnauthorized = true
+					attemptGeneration = m.nextResultGeneration()
 					execCtx = newUpstreamAttemptContext(execCtx)
 					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 					startRetry := time.Now()
@@ -618,7 +621,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				if isResponsesCompactAvailabilityNeutralError(execOpts, errExec, result.Error) {
 					m.recordAvailabilityNeutralResult(execCtx, result)
 				} else {
-					m.MarkResult(execCtx, result)
+					m.markResult(execCtx, result, attemptGeneration)
 				}
 				if okAction {
 					if isRequestScopedStop(action, okAction) {
@@ -639,7 +642,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				}
 				continue
 			}
-			m.MarkResult(execCtx, result)
+			m.markResult(execCtx, result, attemptGeneration)
 			attemptAliasResult := resolveAttemptAliasResult(routing, auth, routeModel, upstreamModel, aliasResult)
 			rewriteForceMappedResponse(&resp, attemptAliasResult)
 			return resp, nil
@@ -726,6 +729,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		}
 		attempted[auth.ID] = struct{}{}
 		var errPrepare error
+		prepareGeneration := m.nextResultGeneration()
 		auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
 		if errPrepare != nil {
 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errPrepare); errCancel != nil {
@@ -736,7 +740,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				stateModel = canonicalModelKey(routeModel)
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: stateModel, RouteModel: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts, SkipQuotaObservation: true}
-			m.MarkResult(execCtx, result)
+			m.markResult(execCtx, result, prepareGeneration)
 			lastErr = errPrepare
 			continue
 		}
@@ -779,6 +783,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if !restoreExecutionModel {
 				execReq = attachResolvedAPIKeyModelInfo(routing, execReq, auth, routeModel, upstreamModel)
 			}
+			attemptGeneration := m.nextResultGeneration()
 			execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 			startExec := time.Now()
 			resp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)
@@ -795,6 +800,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				if refreshed, okRefresh := m.tryRefreshAfterUnauthorized(refreshCtx, auth, errExec, didRefreshOnUnauthorized); okRefresh {
 					auth = refreshed
 					didRefreshOnUnauthorized = true
+					attemptGeneration = m.nextResultGeneration()
 					execCtx = newUpstreamAttemptContext(execCtx)
 					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 					startRetry := time.Now()
@@ -835,7 +841,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 					if isCredentialScopedError(errExec) {
 						result.CredentialScope = true
 					}
-					m.MarkResult(execCtx, result)
+					m.markResult(execCtx, result, attemptGeneration)
 				}
 				if okAction {
 					if isRequestScopedStop(action, okAction) {
@@ -856,7 +862,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				}
 				continue
 			}
-			m.MarkResult(execCtx, result)
+			m.markResult(execCtx, result, attemptGeneration)
 			attemptAliasResult := resolveAttemptAliasResult(routing, auth, routeModel, upstreamModel, aliasResult)
 			rewriteForceMappedResponse(&resp, attemptAliasResult)
 			return resp, nil
@@ -1055,6 +1061,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		}
 		attempted[auth.ID] = struct{}{}
 		var errPrepare error
+		prepareGeneration := m.nextResultGeneration()
 		if selection != nil {
 			auth, errPrepare = m.prepareHomeRequestAuth(execCtx, executor, selection)
 		} else {
@@ -1086,7 +1093,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				m.reportHomeResult(execCtx, result, auth)
 				releaseAttempt()
 			} else {
-				m.MarkResult(execCtx, result)
+				m.markResult(execCtx, result, prepareGeneration)
 			}
 			lastErr = errPrepare
 			if homeMode {
