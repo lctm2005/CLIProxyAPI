@@ -30,6 +30,7 @@ type scheduledState int
 const (
 	scheduledStateReady scheduledState = iota
 	scheduledStateCooldown
+	scheduledStateTransientCooldown
 	scheduledStateBlocked
 	scheduledStateDisabled
 )
@@ -533,6 +534,7 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 	now := time.Now()
 	total := 0
 	cooldownCount := 0
+	transientCooldownCount := 0
 	unauthorizedCount := 0
 	earliest := time.Time{}
 
@@ -553,9 +555,10 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 		if shard == nil {
 			continue
 		}
-		localTotal, localCooldownCount, localUnauthorizedCount, localEarliest := shard.availabilitySummaryLocked(predicate)
+		localTotal, localCooldownCount, localTransientCooldownCount, localUnauthorizedCount, localEarliest := shard.availabilitySummaryLocked(predicate)
 		total += localTotal
 		cooldownCount += localCooldownCount
+		transientCooldownCount += localTransientCooldownCount
 		unauthorizedCount += localUnauthorizedCount
 		if !localEarliest.IsZero() && (earliest.IsZero() || localEarliest.Before(earliest)) {
 			earliest = localEarliest
@@ -591,6 +594,11 @@ func (s *authScheduler) mixedUnavailableErrorLocked(providers []string, model st
 		resetIn := earliest.Sub(now)
 		if resetIn < 0 {
 			resetIn = 0
+		}
+		if transientCooldownCount > 0 {
+			err := newTransientModelCooldownError(model, "", resetIn)
+			err.cause = lastCandidateErr
+			return err
 		}
 		return newModelCooldownErrorWithCause(model, "", resetIn, lastCandidateErr)
 	}
@@ -1061,6 +1069,9 @@ func (m *modelScheduler) upsertEntryLocked(meta *scheduledAuthMeta, now time.Tim
 	case reason == blockReasonCooldown:
 		entry.state = scheduledStateCooldown
 		entry.nextRetryAt = next
+	case reason == blockReasonTransientCooldown:
+		entry.state = scheduledStateTransientCooldown
+		entry.nextRetryAt = next
 	case reason == blockReasonDisabled:
 		entry.state = scheduledStateDisabled
 	default:
@@ -1138,6 +1149,9 @@ func (m *modelScheduler) promoteExpiredLocked(now time.Time) {
 			entry.nextRetryAt = time.Time{}
 		case reason == blockReasonCooldown:
 			entry.state = scheduledStateCooldown
+			entry.nextRetryAt = next
+		case reason == blockReasonTransientCooldown:
+			entry.state = scheduledStateTransientCooldown
 			entry.nextRetryAt = next
 		case reason == blockReasonDisabled:
 			entry.state = scheduledStateDisabled
@@ -1250,7 +1264,7 @@ func (m *modelScheduler) readyCountAtPriorityLocked(preferWebsocket bool, priori
 // unavailableErrorLocked returns the correct unavailable or cooldown error for the shard.
 func (m *modelScheduler) unavailableErrorLocked(provider, model string, predicate func(*scheduledAuth) bool) error {
 	now := time.Now()
-	total, cooldownCount, unauthorizedCount, earliest := m.availabilitySummaryLocked(predicate)
+	total, cooldownCount, transientCooldownCount, unauthorizedCount, earliest := m.availabilitySummaryLocked(predicate)
 	_, _, _, authErr, _, _ := m.candidateErrorsLocked(model, predicate)
 	lastCandidateErr, _, _ := m.latestCandidateErrorWithTimeLocked(model, predicate)
 	if total == 0 {
@@ -1264,6 +1278,11 @@ func (m *modelScheduler) unavailableErrorLocked(provider, model string, predicat
 		resetIn := earliest.Sub(now)
 		if resetIn < 0 {
 			resetIn = 0
+		}
+		if transientCooldownCount > 0 {
+			err := newTransientModelCooldownError(model, providerForError, resetIn)
+			err.cause = lastCandidateErr
+			return err
 		}
 		return newModelCooldownErrorWithCause(model, providerForError, resetIn, lastCandidateErr)
 	}
@@ -1361,12 +1380,13 @@ func (m *modelScheduler) candidateErrorsLocked(model string, predicate func(*sch
 }
 
 // availabilitySummaryLocked summarizes total candidates, cooldown count, and earliest retry time.
-func (m *modelScheduler) availabilitySummaryLocked(predicate func(*scheduledAuth) bool) (int, int, int, time.Time) {
+func (m *modelScheduler) availabilitySummaryLocked(predicate func(*scheduledAuth) bool) (int, int, int, int, time.Time) {
 	if m == nil {
-		return 0, 0, 0, time.Time{}
+		return 0, 0, 0, 0, time.Time{}
 	}
 	total := 0
 	cooldownCount := 0
+	transientCooldownCount := 0
 	unauthorizedCount := 0
 	earliest := time.Time{}
 	for _, entry := range m.entries {
@@ -1377,7 +1397,10 @@ func (m *modelScheduler) availabilitySummaryLocked(predicate func(*scheduledAuth
 		if entry == nil || entry.auth == nil {
 			continue
 		}
-		if entry.state == scheduledStateCooldown {
+		if entry.state == scheduledStateCooldown || entry.state == scheduledStateTransientCooldown {
+			if entry.state == scheduledStateTransientCooldown {
+				transientCooldownCount++
+			}
 			cooldownCount++
 			if !entry.nextRetryAt.IsZero() && (earliest.IsZero() || entry.nextRetryAt.Before(earliest)) {
 				earliest = entry.nextRetryAt
@@ -1388,7 +1411,7 @@ func (m *modelScheduler) availabilitySummaryLocked(predicate func(*scheduledAuth
 			unauthorizedCount++
 		}
 	}
-	return total, cooldownCount, unauthorizedCount, earliest
+	return total, cooldownCount, transientCooldownCount, unauthorizedCount, earliest
 }
 
 // rebuildIndexesLocked reconstructs ready and blocked views from the current entry map.
@@ -1416,7 +1439,7 @@ func (m *modelScheduler) rebuildIndexesLocked() {
 		case scheduledStateReady:
 			priority := entry.meta.priority
 			priorityBuckets[priority] = append(priorityBuckets[priority], entry)
-		case scheduledStateCooldown, scheduledStateBlocked:
+		case scheduledStateCooldown, scheduledStateTransientCooldown, scheduledStateBlocked:
 			m.blocked = append(m.blocked, entry)
 		}
 	}

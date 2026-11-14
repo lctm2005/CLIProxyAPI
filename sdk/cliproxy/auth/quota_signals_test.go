@@ -43,6 +43,31 @@ func TestQuotaStateObserveResponseHeadersKeepsProviderScopedSignals(t *testing.T
 	}
 }
 
+func TestOlderResultPreservesNewerQuotaObservation(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	id := t.Name()
+	if _, errRegister := m.Register(context.Background(), &Auth{ID: id, Provider: "codex"}); errRegister != nil {
+		t.Fatal(errRegister)
+	}
+	older, newer := m.nextResultGeneration(), m.nextResultGeneration()
+	ctx := internallogging.WithResponseHeadersHolder(context.Background())
+	internallogging.SetResponseHeaders(ctx, http.Header{"X-Codex-Primary-Used-Percent": {"30"}})
+	m.markResult(ctx, Result{AuthID: id, Provider: "codex", Model: "model", Error: &Error{HTTPStatus: 502, Message: "newer failure"}}, newer)
+	before, _ := m.GetByID(id)
+	internallogging.SetResponseHeaders(ctx, http.Header{"X-Codex-Primary-Used-Percent": {"1"}})
+	m.markResult(ctx, Result{AuthID: id, Provider: "codex", Model: "model", Success: true}, older)
+	after, _ := m.GetByID(id)
+	if !reflect.DeepEqual(after.Quota, before.Quota) || !reflect.DeepEqual(after.ModelStates, before.ModelStates) {
+		t.Fatal("older result replaced newer availability or quota observations")
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatal("older result changed the timestamp of newer auth diagnostics")
+	}
+	if after.Success != before.Success+1 || after.Failed != before.Failed || after.Generation <= before.Generation {
+		t.Fatal("older result was not counted as a new runtime revision")
+	}
+}
+
 func TestQuotaStateObserveResponseHeadersBoundsAndCanonicalizesValues(t *testing.T) {
 	var quota QuotaState
 	longValue := strings.Repeat("x", maxQuotaSignalValue+1)

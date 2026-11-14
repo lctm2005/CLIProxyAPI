@@ -50,6 +50,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeClaudeKeys(ctx)...)
 	// Codex API Keys
 	out = append(out, s.synthesizeCodexKeys(ctx)...)
+	// TRAE CLI local auth
+	out = append(out, s.synthesizeTraeCLI(ctx)...)
 	// xAI API Keys
 	out = append(out, s.synthesizeXAIKeys(ctx)...)
 	// OpenAI-compat

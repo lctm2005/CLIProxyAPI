@@ -576,7 +576,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 			args := "{}"
 			if hasArgs {
 				args = b.String()
-			} else if isIncomplete || !isExplicitToolFinish {
+			} else if st.FuncItemCustom[key] || isIncomplete || !isExplicitToolFinish {
 				args = ""
 			}
 			if isIncomplete {

@@ -38,6 +38,62 @@ func ComputeGeminiModelsHash(models []config.GeminiModel) string {
 	return modelconfig.ComputeGeminiModelsHash(models)
 }
 
+// ComputeTraeCLIModelsHash returns a stable hash for TRAE CLI model aliases.
+func ComputeTraeCLIModelsHash(models []config.TraeCLIModel) string {
+	keys := normalizeModelPairs(func(out func(key string)) {
+		for _, model := range models {
+			name := strings.TrimSpace(model.Name)
+			alias := strings.TrimSpace(model.Alias)
+			modelName := strings.TrimSpace(model.ModelName)
+			aliases := normalizedTraeCLIAliases(model.Aliases)
+			aliasNames := normalizedTraeCLIAliasNames(model.AliasNames)
+			if name == "" && alias == "" && modelName == "" && len(aliases) == 0 && aliasNames == "" {
+				continue
+			}
+			out(strings.ToLower(name) + "|" + strings.ToLower(alias) + "|" + strings.ToLower(modelName) + "|" + strings.Join(aliases, ",") + "|" + aliasNames)
+		}
+	})
+	return hashJoined(keys)
+}
+
+func normalizedTraeCLIAliasNames(raw map[string]string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	pairs := make([]string, 0, len(raw))
+	for key, name := range raw {
+		k := strings.ToLower(strings.TrimSpace(key))
+		v := strings.TrimSpace(name)
+		if k == "" || v == "" {
+			continue
+		}
+		pairs = append(pairs, k+"="+v)
+	}
+	if len(pairs) == 0 {
+		return ""
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, ",")
+}
+
+func normalizedTraeCLIAliases(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	aliases := make([]string, 0, len(raw))
+	for _, item := range raw {
+		alias := strings.ToLower(strings.TrimSpace(item))
+		if alias == "" {
+			continue
+		}
+		if _, exists := seen[alias]; exists {
+			continue
+		}
+		seen[alias] = struct{}{}
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return aliases
+}
+
 // ComputeExcludedModelsHash returns a normalized hash for excluded model lists.
 func ComputeExcludedModelsHash(excluded []string) string {
 	if len(excluded) == 0 {

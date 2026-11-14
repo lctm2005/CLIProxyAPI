@@ -8,6 +8,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -124,6 +125,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		applyStreamHeaders(intercepted.Headers)
 	}
 	upstreamHeaders := downstreamHeadersAfterInterceptors(baseStreamHeaders, rawStreamHeaders, passthroughHeadersEnabled)
+	upstreamHeaders = mergeDiagnosticHeaders(upstreamHeaders, baseStreamHeaders)
 	if upstreamHeaders == nil && (passthroughHeadersEnabled || streamInterceptorsActive) {
 		upstreamHeaders = make(http.Header)
 	}
@@ -563,7 +565,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		retryResult, retryErr := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 		if retryErr != nil {
 			originalBootstrapErr := executionErrorMessage(bootstrapStreamErr)
-			if isAuthSelectionUnavailable(retryErr) && originalBootstrapErr.StatusCode >= http.StatusInternalServerError {
+			if coreauth.IsSelectionUnavailable(retryErr) && originalBootstrapErr.StatusCode >= http.StatusInternalServerError {
 				bootstrapErr = originalBootstrapErr
 			} else {
 				bootstrapErr = executionErrorMessage(enrichAuthSelectionError(retryErr, providers, normalizedModel))
@@ -594,6 +596,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	}
 
 	upstreamHeaders := downstreamHeadersAfterInterceptors(baseStreamHeaders, rawStreamHeaders, passthroughHeadersEnabled)
+	upstreamHeaders = mergeDiagnosticHeaders(upstreamHeaders, baseStreamHeaders)
 	if upstreamHeaders == nil && (passthroughHeadersEnabled || streamInterceptorsActive) {
 		upstreamHeaders = make(http.Header)
 	}

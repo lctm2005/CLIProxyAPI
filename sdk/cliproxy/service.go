@@ -74,6 +74,11 @@ type Service struct {
 	// watcherCancel cancels the watcher context.
 	watcherCancel context.CancelFunc
 
+	traeModelsCache   traeCLIModelsCache
+	traeRefreshMu     sync.Mutex
+	traeRefreshCancel context.CancelFunc
+	traeRefreshDone   chan struct{}
+
 	// authUpdates channel for authentication updates.
 	authUpdates chan watcher.AuthUpdate
 

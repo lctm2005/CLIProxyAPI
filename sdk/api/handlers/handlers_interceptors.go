@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -286,7 +287,7 @@ func finalInterceptorHeaders(current, intercepted http.Header) http.Header {
 
 func downstreamHeadersFromExecutor(headers http.Header, passthrough bool) http.Header {
 	if !passthrough {
-		return nil
+		return cliproxyDiagnosticHeaders(headers)
 	}
 	return FilterUpstreamHeaders(headers)
 }
@@ -296,6 +297,41 @@ func downstreamHeadersAfterInterceptors(baseRaw, finalRaw http.Header, passthrou
 		return FilterUpstreamHeaders(finalRaw)
 	}
 	return FilterUpstreamHeaders(diffHeaders(baseRaw, finalRaw))
+}
+
+func cliproxyDiagnosticHeaders(src http.Header) http.Header {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(http.Header)
+	for key, values := range src {
+		canonicalKey := http.CanonicalHeaderKey(key)
+		if strings.HasPrefix(strings.ToLower(canonicalKey), "x-traecli-") {
+			out[canonicalKey] = append([]string(nil), values...)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeDiagnosticHeaders(dst, src http.Header) http.Header {
+	diagnostic := cliproxyDiagnosticHeaders(src)
+	if len(diagnostic) == 0 {
+		return dst
+	}
+	out := cloneHeader(dst)
+	if out == nil {
+		out = make(http.Header)
+	}
+	for key, values := range diagnostic {
+		out.Del(key)
+		for _, value := range values {
+			out.Add(key, value)
+		}
+	}
+	return out
 }
 
 func diffHeaders(base, next http.Header) http.Header {
@@ -593,6 +629,7 @@ func (h *BaseAPIHandler) applyResponseInterceptors(ctx context.Context, requestI
 		Metadata:        opts.Metadata,
 	}, skipPluginID)
 	responseHeaders = downstreamHeadersAfterInterceptors(rawResponseHeaders, finalInterceptorHeaders(rawResponseHeaders, resp.Headers), PassthroughHeadersEnabled(h.Cfg))
+	responseHeaders = mergeDiagnosticHeaders(responseHeaders, rawResponseHeaders)
 	if len(resp.Body) > 0 {
 		body = cloneBytes(resp.Body)
 	}

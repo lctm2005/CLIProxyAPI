@@ -106,3 +106,12 @@ func TestBuildConfigModelsDisplayNameFallback(t *testing.T) {
 		t.Fatalf("DisplayName = %q, want upstream model name", model.DisplayName)
 	}
 }
+
+func TestBuildConfigModelsDescription(t *testing.T) {
+	model := buildConfigModels([]config.TraeCLIModel{{
+		Name: "TRAE GPT-5.6 Sol", Alias: "gpt-5.6-sol", Description: "TRAE GPT-5.6 Sol via CLIProxyAPI",
+	}}, "trae", "traecli")[0]
+	if model.Description != "TRAE GPT-5.6 Sol via CLIProxyAPI" {
+		t.Fatalf("Description = %q, want configured description", model.Description)
+	}
+}

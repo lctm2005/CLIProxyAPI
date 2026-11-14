@@ -295,6 +295,16 @@ func (r *ModelRegistry) triggerModelsUnregistered(provider, clientID string) {
 //   - clientProvider: Provider name (e.g., "gemini", "claude", "openai")
 //   - models: List of models that this client can provide
 func (r *ModelRegistry) RegisterClient(clientID, clientProvider string, models []*ModelInfo) {
+	r.registerClient(clientID, clientProvider, models, false)
+}
+
+// UpdateClientModels replaces a model catalog while retaining cooldown and
+// suspension for bindings whose provider and model ID have not changed.
+func (r *ModelRegistry) UpdateClientModels(clientID, clientProvider string, models []*ModelInfo) {
+	r.registerClient(clientID, clientProvider, models, true)
+}
+
+func (r *ModelRegistry) registerClient(clientID, clientProvider string, models []*ModelInfo, preserveState bool) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	r.ensureAvailableModelsCacheLocked()
@@ -475,13 +485,10 @@ func (r *ModelRegistry) RegisterClient(clientID, clientProvider string, models [
 				reg.InfoByProvider[oldProvider].SupportsWebSearch = r.hasClientSupportingWebSearchLocked(id, oldProvider, clientID)
 			}
 			reg.LastUpdated = now
-			// Re-registering an existing client/model binding starts a fresh registry
-			// snapshot for that binding. Cooldown and suspension are transient
-			// scheduling state and must not survive this reconciliation step.
-			if reg.QuotaExceededClients != nil {
+			// Ordinary auth registration resets transient state. Catalog-only
+			// updates preserve it for the existing provider.
+			if !preserveState || providerChanged {
 				delete(reg.QuotaExceededClients, clientID)
-			}
-			if reg.SuspendedClients != nil {
 				delete(reg.SuspendedClients, clientID)
 			}
 			if providerChanged && provider != "" {
@@ -764,6 +771,9 @@ func (r *ModelRegistry) SetModelQuotaExceeded(clientID, modelID string) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	r.ensureAvailableModelsCacheLocked()
+	if r.clientModelInfos[clientID][modelID] == nil {
+		return
+	}
 
 	if registration, exists := r.models[modelID]; exists {
 		now := time.Now()
@@ -991,6 +1001,9 @@ func (r *ModelRegistry) SuspendClientModel(clientID, modelID, reason string) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	r.ensureAvailableModelsCacheLocked()
+	if r.clientModelInfos[clientID][modelID] == nil {
+		return
+	}
 
 	registration, exists := r.models[modelID]
 	if !exists || registration == nil {
@@ -1546,6 +1559,9 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 			result["display_name"] = model.DisplayName
 		} else {
 			result["display_name"] = model.ID
+		}
+		if model.Description != "" {
+			result["description"] = model.Description
 		}
 		maxInput := model.ContextLength
 		if maxInput <= 0 {

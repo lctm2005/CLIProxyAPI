@@ -553,6 +553,100 @@ func TestSelectorPick_AllCooldownReturnsModelCooldownError(t *testing.T) {
 	})
 }
 
+func TestSelectorPick_AllTransientCooldownReturnsServiceUnavailable(t *testing.T) {
+	t.Parallel()
+
+	const model = "transient-model"
+	next := time.Now().Add(60 * time.Second)
+	auths := []*Auth{
+		{
+			ID: "transient-a",
+			ModelStates: map[string]*ModelState{
+				model: {
+					Status:         StatusError,
+					Unavailable:    true,
+					NextRetryAfter: next,
+				},
+			},
+		},
+		{
+			ID: "transient-b",
+			ModelStates: map[string]*ModelState{
+				model: {
+					Status:         StatusError,
+					Unavailable:    true,
+					NextRetryAfter: next,
+				},
+			},
+		},
+	}
+
+	_, errPick := (&FillFirstSelector{}).Pick(context.Background(), "traecli", model, cliproxyexecutor.Options{}, auths)
+	if errPick == nil {
+		t.Fatal("Pick() error = nil")
+	}
+	var cooldownErr *modelCooldownError
+	if !errors.As(errPick, &cooldownErr) {
+		t.Fatalf("Pick() error = %T, want *modelCooldownError", errPick)
+	}
+	if got := cooldownErr.StatusCode(); got != http.StatusServiceUnavailable {
+		t.Fatalf("StatusCode() = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+	if got := cooldownErr.Headers().Get("Retry-After"); got == "" {
+		t.Fatal("Retry-After = empty")
+	}
+
+	var payload map[string]any
+	if errJSON := json.Unmarshal([]byte(cooldownErr.Error()), &payload); errJSON != nil {
+		t.Fatalf("json.Unmarshal(Error()) error = %v", errJSON)
+	}
+	rawErr, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("Error() payload missing error object: %v", payload)
+	}
+	if got, _ := rawErr["code"].(string); got != "model_unavailable" {
+		t.Fatalf("Error().error.code = %q, want %q", got, "model_unavailable")
+	}
+}
+
+func TestSelectorPick_ExpiredQuotaThenTransientReturnsServiceUnavailable(t *testing.T) {
+	t.Parallel()
+
+	const model = "expired-quota-transient-model"
+	now := time.Now()
+	auth := &Auth{
+		ID: "expired-quota-transient-auth",
+		ModelStates: map[string]*ModelState{
+			model: {
+				Status:         StatusError,
+				Unavailable:    true,
+				NextRetryAfter: now.Add(time.Minute),
+				LastError:      &Error{HTTPStatus: http.StatusBadGateway, Message: "temporary upstream failure"},
+				Quota: QuotaState{
+					Exceeded:      true,
+					Reason:        "quota",
+					NextRecoverAt: now.Add(-time.Minute),
+				},
+			},
+		},
+	}
+
+	_, errPick := (&FillFirstSelector{}).Pick(context.Background(), "traecli", model, cliproxyexecutor.Options{}, []*Auth{auth})
+	if errPick == nil {
+		t.Fatal("Pick() error = nil")
+	}
+	var cooldownErr *modelCooldownError
+	if !errors.As(errPick, &cooldownErr) {
+		t.Fatalf("Pick() error = %T, want *modelCooldownError", errPick)
+	}
+	if got := cooldownErr.StatusCode(); got != http.StatusServiceUnavailable {
+		t.Fatalf("StatusCode() = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+	if cooldownErr.kind != modelCooldownTransient {
+		t.Fatalf("cooldown kind = %v, want transient", cooldownErr.kind)
+	}
+}
+
 func TestIsAuthBlockedForModel_UnavailableWithoutNextRetryIsBlocked(t *testing.T) {
 	t.Parallel()
 

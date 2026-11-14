@@ -236,6 +236,15 @@ func responsesCustomToolNames(requestRawJSON []byte) map[string]struct{} {
 	return names
 }
 
+// IsCustomTool reports whether name resolves to a surviving freeform declaration.
+// Executors must use the same duplicate and namespace rules as response translation
+// before deciding whether tool arguments are JSON or opaque input text.
+func IsCustomTool(requestRawJSON []byte, name string) bool {
+	name = canonicalResponsesToolName(requestRawJSON, name)
+	_, custom := responsesCustomToolNames(requestRawJSON)[name]
+	return custom
+}
+
 func responsesSingleCustomToolName(requestRawJSON []byte) (string, bool) {
 	customToolNames := responsesCustomToolNames(requestRawJSON)
 	if len(customToolNames) != 1 {

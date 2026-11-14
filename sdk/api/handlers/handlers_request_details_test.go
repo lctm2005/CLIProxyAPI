@@ -123,6 +123,29 @@ func TestGetRequestDetails_PreservesSuffix(t *testing.T) {
 	}
 }
 
+func TestGetRequestDetailsRoutesCanonicalTraeAlias(t *testing.T) {
+	modelRegistry := registry.GetGlobalRegistry()
+	clientID := "test-request-details-trae-canonical"
+	modelRegistry.RegisterClient(clientID, "traecli", []*registry.ModelInfo{{
+		ID:      "claude-haiku-4-5",
+		Created: time.Now().Unix(),
+		Type:    "traecli",
+	}})
+	t.Cleanup(func() { modelRegistry.UnregisterClient(clientID) })
+
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, coreauth.NewManager(nil, nil, nil))
+	providers, model, errMsg := handler.getRequestDetails("claude-haiku-4-5")
+	if errMsg != nil {
+		t.Fatalf("getRequestDetails() error = %v", errMsg)
+	}
+	if !reflect.DeepEqual(providers, []string{"traecli"}) {
+		t.Fatalf("providers = %v, want traecli", providers)
+	}
+	if model != "claude-haiku-4-5" {
+		t.Fatalf("model = %q, want canonical ID", model)
+	}
+}
+
 // TestGetRequestDetails_UnknownModelErrorResistsJSONInjection pins the unroutable
 // model error body against client-controlled model names. The name is echoed into
 // the body, so formatting it into a JSON literal would let a caller corrupt the

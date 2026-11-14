@@ -76,14 +76,23 @@ type blockReason int
 const (
 	blockReasonNone blockReason = iota
 	blockReasonCooldown
+	blockReasonTransientCooldown
 	blockReasonDisabled
 	blockReasonOther
+)
+
+type modelCooldownKind int
+
+const (
+	modelCooldownQuota modelCooldownKind = iota
+	modelCooldownTransient
 )
 
 type modelCooldownError struct {
 	model    string
 	resetIn  time.Duration
 	provider string
+	kind     modelCooldownKind
 	cause    error
 }
 
@@ -94,6 +103,16 @@ func NewModelCooldownError(model, provider string, resetIn time.Duration) error 
 
 func newModelCooldownError(model, provider string, resetIn time.Duration) *modelCooldownError {
 	return newModelCooldownErrorWithCause(model, provider, resetIn, nil)
+}
+
+func newTransientModelCooldownError(model, provider string, resetIn time.Duration) *modelCooldownError {
+	return newModelCooldownErrorWithKind(model, provider, resetIn, modelCooldownTransient)
+}
+
+func newModelCooldownErrorWithKind(model, provider string, resetIn time.Duration, kind modelCooldownKind) *modelCooldownError {
+	err := newModelCooldownErrorWithCause(model, provider, resetIn, nil)
+	err.kind = kind
+	return err
 }
 
 func newModelCooldownErrorWithCause(model, provider string, resetIn time.Duration, cause error) *modelCooldownError {
@@ -124,7 +143,12 @@ func (e *modelCooldownError) Error() string {
 	if modelName == "" {
 		modelName = "requested model"
 	}
+	code := "model_cooldown"
 	message := fmt.Sprintf("All credentials for model %s are cooling down", modelName)
+	if e.kind == modelCooldownTransient {
+		code = "model_unavailable"
+		message = fmt.Sprintf("All credentials for model %s are temporarily unavailable", modelName)
+	}
 	if e.provider != "" {
 		message = fmt.Sprintf("%s via provider %s", message, e.provider)
 	}
@@ -139,7 +163,7 @@ func (e *modelCooldownError) Error() string {
 		displayDuration = displayDuration.Round(time.Second)
 	}
 	errorBody := map[string]any{
-		"code":          "model_cooldown",
+		"code":          code,
 		"message":       message,
 		"model":         e.model,
 		"reset_time":    displayDuration.String(),
@@ -158,7 +182,7 @@ func (e *modelCooldownError) Error() string {
 	payload := map[string]any{"error": errorBody}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Sprintf(`{"error":{"code":"model_cooldown","message":"%s"}}`, message)
+		return fmt.Sprintf(`{"error":{"code":"%s","message":"%s"}}`, code, message)
 	}
 	return string(data)
 }
@@ -347,6 +371,9 @@ func SanitizeUpstreamErrorSummary(s string) string {
 }
 
 func (e *modelCooldownError) StatusCode() int {
+	if e != nil && e.kind == modelCooldownTransient {
+		return http.StatusServiceUnavailable
+	}
 	return http.StatusTooManyRequests
 }
 
@@ -466,7 +493,7 @@ func preferCodexWebsocketAuths(ctx context.Context, provider string, available [
 	return available
 }
 
-func collectAvailableByPriority(auths []*Auth, model string, now time.Time) (available map[int][]*Auth, cooldownCount int, earliest time.Time) {
+func collectAvailableByPriority(auths []*Auth, model string, now time.Time) (available map[int][]*Auth, cooldownCount, transientCooldownCount int, earliest time.Time) {
 	available = make(map[int][]*Auth)
 	for i := 0; i < len(auths); i++ {
 		candidate := auths[i]
@@ -476,14 +503,17 @@ func collectAvailableByPriority(auths []*Auth, model string, now time.Time) (ava
 			available[priority] = append(available[priority], candidate)
 			continue
 		}
-		if reason == blockReasonCooldown {
+		if reason == blockReasonCooldown || reason == blockReasonTransientCooldown {
 			cooldownCount++
+			if reason == blockReasonTransientCooldown {
+				transientCooldownCount++
+			}
 			if !next.IsZero() && (earliest.IsZero() || next.Before(earliest)) {
 				earliest = next
 			}
 		}
 	}
-	return available, cooldownCount, earliest
+	return available, cooldownCount, transientCooldownCount, earliest
 }
 
 func getAvailableAuths(auths []*Auth, provider, model string, now time.Time) ([]*Auth, error) {
@@ -525,7 +555,7 @@ func getAvailableAuthsWithPriorityMode(auths []*Auth, provider, model string, no
 		return nil, &Error{Code: "auth_not_found", Message: "no auth candidates"}
 	}
 
-	availableByPriority, cooldownCount, earliest := collectAvailableByPriority(auths, model, now)
+	availableByPriority, cooldownCount, transientCooldownCount, earliest := collectAvailableByPriority(auths, model, now)
 	if len(availableByPriority) == 0 {
 		if cooldownCount == len(auths) && !earliest.IsZero() {
 			providerForError := provider
@@ -535,6 +565,9 @@ func getAvailableAuthsWithPriorityMode(auths []*Auth, provider, model string, no
 			resetIn := earliest.Sub(now)
 			if resetIn < 0 {
 				resetIn = 0
+			}
+			if transientCooldownCount > 0 {
+				return nil, newTransientModelCooldownError(model, providerForError, resetIn)
 			}
 			return nil, newModelCooldownError(model, providerForError, resetIn)
 		}
@@ -895,10 +928,14 @@ func availabilityBlock(unavailable, quotaExceeded bool, nextRetryAfter, nextReco
 		}
 	}
 	if !next.IsZero() {
-		if quotaExceeded {
+		// An expired quota marker must not reclassify a newer transient retry.
+		// Preserve legacy quota states that recorded only NextRetryAfter.
+		quotaRecoveryActive := quotaExceeded && nextRecoverAt.After(now)
+		quotaUsesLegacyRetry := quotaExceeded && nextRecoverAt.IsZero() && nextRetryAfter.After(now)
+		if quotaUsesLegacyRetry || (quotaRecoveryActive && !nextRetryAfter.After(nextRecoverAt)) {
 			return true, blockReasonCooldown, next
 		}
-		return true, blockReasonOther, next
+		return true, blockReasonTransientCooldown, next
 	}
 	if hasRecoveryTime {
 		return false, blockReasonNone, time.Time{}

@@ -104,6 +104,37 @@ func lastStopReason(events []sseEvent) string {
 
 const streamReq = `{"stream":true}`
 
+func TestStreaming_TranslatesDetailedUsageWithoutDoubleCountingReasoning(t *testing.T) {
+	events := runStream(t, streamReq,
+		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`,
+		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":70,"cached_creation_tokens":5},"completion_tokens_details":{"reasoning_tokens":12}}}`,
+	)
+
+	for _, event := range events {
+		if event.Type != "message_delta" {
+			continue
+		}
+		usage := gjson.Get(event.Payload, "usage")
+		if got := usage.Get("input_tokens").Int(); got != 25 {
+			t.Fatalf("input_tokens = %d, want uncached 25; payload=%s", got, event.Payload)
+		}
+		if got := usage.Get("cache_read_input_tokens").Int(); got != 70 {
+			t.Fatalf("cache_read_input_tokens = %d, want 70; payload=%s", got, event.Payload)
+		}
+		if got := usage.Get("cache_creation_input_tokens").Int(); got != 5 {
+			t.Fatalf("cache_creation_input_tokens = %d, want 5; payload=%s", got, event.Payload)
+		}
+		if got := usage.Get("output_tokens").Int(); got != 20 {
+			t.Fatalf("output_tokens = %d, want 20 including reasoning; payload=%s", got, event.Payload)
+		}
+		if got := usage.Get("output_tokens_details.thinking_tokens").Int(); got != 12 {
+			t.Fatalf("thinking_tokens = %d, want 12; payload=%s", got, event.Payload)
+		}
+		return
+	}
+	t.Fatalf("missing message_delta in events=%+v", events)
+}
+
 func TestStreaming_LateUsageOnlyDoesNotEmitAfterMessageStop(t *testing.T) {
 	events := runStream(t, streamReq,
 		`{"id":"c1","model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,

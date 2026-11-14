@@ -1,3 +1,9 @@
+> **Fork 说明**
+>
+> 本 fork 基于 [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)，新增 TRAE CLI provider，并兼容 Claude Code 和 Codex。部署和操作方法参见 [TRAE 一键部署与操作](TRAE_DEPLOY_CN.md)。
+
+---
+
 # CLI Proxy API
 
 [English](README.md) | 中文 | [日本語](README_JA.md)
@@ -105,7 +111,7 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 - 新增 OpenAI Codex（GPT 系列）支持（OAuth 登录）
 - 新增 Claude Code 支持（OAuth 登录）
 - 新增 Grok Build 支持（OAuth 登录）
-- 支持导入本机 Trae CLI 的现有登录状态
+- 支持复用本机已有的 TRAE CLI 登录状态
 - 支持流式、非流式响应，以及受支持场景下的 WebSocket 响应
 - 函数调用/工具支持
 - 多模态输入（文本、图片）
@@ -123,17 +129,17 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 
 CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-for.me/cn/)
 
-### Trae CLI
+### TRAE CLI
 
-导入本机 `traecli` 已登录的账号，然后正常启动代理：
+本机已安装 TRAE CLI 2.0 时，一键脚本会配置并启动隔离的本地代理；随后可用客户端脚本配置 Claude Code 或 Codex，代理 API Key 不会被复制进客户端设置：
 
 ```bash
 traecli login status
-./CLIProxyAPI --trae-login
-./CLIProxyAPI --config config.yaml
+./trae-quickstart.sh
+./trae-client-setup.sh claude
 ```
 
-导入过程只保存 Trae CLI 本地状态文件的引用和模型目录，不会把 access token 复制进 CLIProxyAPI 的认证文件。默认从 `PATH` 查找 `traecli` 并读取 `~/.trae/cli/auth.json`；自定义安装可设置 `TRAECLI_PATH`、`TRAE_HOME`、`TRAE_AUTH_PATH` 和 `TRAE_MODELS_PATH`，也可用 `TRAE_API_BASE_URL` 覆盖上游地址。
+native/exec 模式、模型发现、systemd 托管和客户端配置说明见 [TRAE 一键部署与操作](TRAE_DEPLOY_CN.md)。
 
 ## 管理 API 文档
 

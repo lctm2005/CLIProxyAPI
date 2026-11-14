@@ -144,6 +144,60 @@ func TestCodexClientModelsResponse_AppliesDisplayNameToTemplateModel(t *testing.
 	}
 }
 
+func TestCodexClientModelsResponse_AppliesDescriptionToTemplateModel(t *testing.T) {
+	resp := BuildResponse([]map[string]any{{
+		"id":          "gpt-5.5",
+		"description": "Configured GPT description",
+	}}, nil, false)
+	models, ok := resp["models"].([]map[string]any)
+	if !ok || len(models) != 1 {
+		t.Fatalf("models = %#v, want one model", resp["models"])
+	}
+	if got := stringModelValue(models[0], "description"); got != "Configured GPT description" {
+		t.Fatalf("description = %q, want Configured GPT description", got)
+	}
+}
+
+func TestCodexClientModelsResponse_HidesClaudeCompatibilityAliases(t *testing.T) {
+	hiddenModelIDs := []string{
+		"claude-opus-5",
+		"claude-fable-5",
+		"claude-sonnet-5",
+		"claude-haiku-4-5",
+	}
+	availableModels := make([]map[string]any, 0, len(hiddenModelIDs)+1)
+	for _, modelID := range hiddenModelIDs {
+		availableModels = append(availableModels, map[string]any{
+			"id":           modelID,
+			"display_name": modelID,
+		})
+	}
+	availableModels = append(availableModels, map[string]any{"id": "gpt-5.6-sol"})
+
+	resp := BuildResponse(availableModels, nil, false)
+	models, ok := resp["models"].([]map[string]any)
+	if !ok || len(models) != len(availableModels) {
+		t.Fatalf("models = %#v, want %d models", resp["models"], len(availableModels))
+	}
+
+	modelsBySlug := make(map[string]map[string]any, len(models))
+	for _, model := range models {
+		modelsBySlug[stringModelValue(model, "slug")] = model
+	}
+	for _, modelID := range hiddenModelIDs {
+		model := modelsBySlug[modelID]
+		if model == nil {
+			t.Fatalf("missing model %q", modelID)
+		}
+		if got := stringModelValue(model, "visibility"); got != "hide" {
+			t.Errorf("%s visibility = %q, want hide", modelID, got)
+		}
+	}
+	if got := stringModelValue(modelsBySlug["gpt-5.6-sol"], "visibility"); got == "hide" {
+		t.Fatalf("gpt-5.6-sol visibility = %q, want visible", got)
+	}
+}
+
 func TestCodexClientModelsResponse_RewritesTemplateMultiAgentVersionWhenEnabled(t *testing.T) {
 	modelIDs := []string{"gpt-5.6-luna", "gpt-5.5"}
 	resp := BuildResponse([]map[string]any{{"id": modelIDs[0]}, {"id": modelIDs[1]}}, nil, true)

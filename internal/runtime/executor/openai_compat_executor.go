@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	logs "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -424,6 +425,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		var param any
 		var streamUsage helps.StreamUsageBuffer
 		var seenDone bool
+		var seenFinish bool
 		var streamFailed bool
 		var streamAborted bool
 		var upstreamEvent string
@@ -436,6 +438,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 				loggedErr = statusErr{code: streamErr.code, msg: "upstream stream returned an error payload"}
 			}
 			helps.RecordAPIResponseError(ctx, e.cfg, loggedErr)
+			logs.CtxError(ctx, "openai compat executor: %v", loggedErr)
 			reporter.PublishFailure(ctx, loggedErr)
 			select {
 			case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
@@ -479,6 +482,9 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 				if streamErr, isError := openAICompatStreamDataError(dataPayload, eventName); isError {
 					publishStreamError(streamErr, true)
 					return true
+				}
+				if reason := gjson.GetBytes(dataPayload, "choices.0.finish_reason"); reason.Type == gjson.String && strings.TrimSpace(reason.String()) != "" {
+					seenFinish = true
 				}
 			}
 
@@ -542,16 +548,16 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 			case <-ctx.Done():
 			}
 		} else if !seenDone {
-			// Responses clients require an explicit terminal event. Treat a clean
-			// upstream EOF without [DONE] as a failed stream instead of completing it.
-			if responseFormat == sdktranslator.FormatOpenAIResponse {
-				streamErr := statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before [DONE]"}
-				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
-				reporter.PublishFailure(ctx, streamErr)
-				select {
-				case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
-				case <-ctx.Done():
+			// Responses requires [DONE]. Messages also needs evidence of
+			// completion, but retains compatibility when finish_reason arrived
+			// and the provider omitted only the final [DONE] marker.
+			if responseFormat == sdktranslator.FormatOpenAIResponse ||
+				(responseFormat == sdktranslator.FormatClaude && !seenFinish) {
+				message := "upstream stream closed before completion"
+				if responseFormat == sdktranslator.FormatOpenAIResponse {
+					message = "upstream stream closed before [DONE]"
 				}
+				publishStreamError(statusErr{code: http.StatusBadGateway, msg: message}, false)
 				return
 			}
 

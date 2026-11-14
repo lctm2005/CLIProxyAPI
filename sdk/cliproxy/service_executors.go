@@ -288,12 +288,12 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		return
 	case "antigravity":
 		s.coreManager.RegisterExecutor(executor.NewAntigravityExecutor(cfg))
+	case "traecli":
+		s.coreManager.RegisterExecutor(executor.NewTraeCLIExecutor(cfg))
 	case "claude":
 		s.coreManager.RegisterExecutor(executor.NewClaudeExecutor(cfg))
 	case "kimi":
 		s.coreManager.RegisterExecutor(executor.NewKimiExecutor(cfg))
-	case "trae":
-		s.coreManager.RegisterExecutor(executor.NewTraeExecutor(cfg))
 	case "xai":
 		if !forceReplace {
 			existingExecutor, hasExecutor := s.coreManager.Executor("xai")

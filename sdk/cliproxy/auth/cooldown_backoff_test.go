@@ -257,8 +257,8 @@ func TestSchedulerPromotesUnknownFailureAfterRetryDeadline(t *testing.T) {
 	if entry == nil {
 		t.Fatalf("scheduler auth %q is missing", authID)
 	}
-	if entry.state != scheduledStateBlocked || entry.nextRetryAt.IsZero() {
-		t.Fatalf("scheduler entry state = %v, retry = %v; want finite blocked state", entry.state, entry.nextRetryAt)
+	if entry.state != scheduledStateTransientCooldown || entry.nextRetryAt.IsZero() {
+		t.Fatalf("scheduler entry state = %v, retry = %v; want finite transient cooldown state", entry.state, entry.nextRetryAt)
 	}
 
 	shard.promoteExpiredLocked(entry.nextRetryAt.Add(time.Nanosecond))

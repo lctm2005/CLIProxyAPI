@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	traeauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/trae"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/modelconfig"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
@@ -141,11 +140,14 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			models = registry.GetCodexProModels()
 		}
 		models = applyExcludedModels(models, excluded)
+	case "traecli":
+		models = s.buildTraeCLIModels(a)
+		if ctx.Err() == nil {
+			s.registerResolvedModelsForAuth(a, provider, models)
+		}
+		return
 	case "kimi":
 		models = registry.GetKimiModels()
-		models = applyExcludedModels(models, excluded)
-	case "trae":
-		models = traeauth.RegistryModels(a.Metadata)
 		models = applyExcludedModels(models, excluded)
 	case "xai":
 		models = registry.GetXAIModels()
@@ -676,6 +678,10 @@ type modelMaxContextLengthEntry interface {
 	GetMaxContextLength() int
 }
 
+type modelDescriptionEntry interface {
+	GetDescription() string
+}
+
 type modelCompatEntry interface {
 	GetIsCompat() bool
 }
@@ -704,6 +710,9 @@ func buildConfiguredModelInfo(model modelEntry, ownedBy, modelType string, creat
 		Type:        modelType,
 		DisplayName: displayName,
 		UserDefined: userDefined,
+	}
+	if descriptionModel, okDescription := any(model).(modelDescriptionEntry); okDescription {
+		info.Description = strings.TrimSpace(descriptionModel.GetDescription())
 	}
 	if maxContextModel, okMaxContext := any(model).(modelMaxContextLengthEntry); okMaxContext {
 		if maxContextLength := maxContextModel.GetMaxContextLength(); maxContextLength > 0 {

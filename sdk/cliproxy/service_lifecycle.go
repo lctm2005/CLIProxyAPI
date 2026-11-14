@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
@@ -185,26 +186,38 @@ func (s *Service) Run(ctx context.Context) error {
 
 		watcherWrapper, errCreate := s.watcherFactory(s.configPath, s.cfg.AuthDir, reloadCallback)
 		if errCreate != nil {
-			return fmt.Errorf("cliproxy: failed to create watcher: %w", errCreate)
-		}
-		s.watcher = watcherWrapper
-		s.ensureAuthUpdateQueue(ctx)
-		if s.authUpdates != nil {
-			watcherWrapper.SetAuthUpdateQueue(s.authUpdates)
-		}
-		watcherWrapper.SetConfig(s.cfg)
-		s.registerPluginAuthParser()
+			if !isWatcherResourceExhaustion(errCreate) {
+				return fmt.Errorf("cliproxy: failed to create watcher: %w", errCreate)
+			}
+			log.WithError(errCreate).Warn("file watcher unavailable due to resource exhaustion; continuing without hot reload")
+		} else {
+			s.watcher = watcherWrapper
+			s.ensureAuthUpdateQueue(ctx)
+			if s.authUpdates != nil {
+				watcherWrapper.SetAuthUpdateQueue(s.authUpdates)
+			}
+			watcherWrapper.SetConfig(s.cfg)
+			s.registerPluginAuthParser()
 
-		watcherCtx, watcherCancel := context.WithCancel(context.Background())
-		s.watcherCancel = watcherCancel
-		if errStart := watcherWrapper.Start(watcherCtx); errStart != nil {
-			return fmt.Errorf("cliproxy: failed to start watcher: %w", errStart)
+			watcherCtx, watcherCancel := context.WithCancel(context.Background())
+			if errStart := watcherWrapper.Start(watcherCtx); errStart != nil {
+				watcherCancel()
+				_ = watcherWrapper.Stop()
+				s.watcher = nil
+				if !isWatcherResourceExhaustion(errStart) {
+					return fmt.Errorf("cliproxy: failed to start watcher: %w", errStart)
+				}
+				log.WithError(errStart).Warn("file watcher unavailable due to resource exhaustion; continuing without hot reload")
+			} else {
+				s.watcherCancel = watcherCancel
+				log.Info("file watcher started for config and auth directory changes")
+			}
 		}
-		log.Info("file watcher started for config and auth directory changes")
 		s.syncPluginModelRuntime(ctx)
 	}
 
 	s.registerModelRefreshCallback()
+	s.startTraeCLIModelRefresh(ctx, time.Hour)
 
 	select {
 	case <-ctx.Done():
@@ -213,6 +226,10 @@ func (s *Service) Run(ctx context.Context) error {
 	case errServer := <-s.serverErr:
 		return errServer
 	}
+}
+
+func isWatcherResourceExhaustion(err error) bool {
+	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENOSPC)
 }
 
 // Shutdown gracefully stops background workers and the HTTP server.
@@ -233,6 +250,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if ctx == nil {
 			ctx = context.Background()
 		}
+		s.stopTraeCLIModelRefresh()
 
 		s.homeLifecycleMu.Lock()
 		if supervisor := s.homeSupervisor; supervisor != nil {

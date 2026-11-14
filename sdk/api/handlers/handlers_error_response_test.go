@@ -182,6 +182,76 @@ func TestInternalConcurrencyBusyWritesRetryAfterWithoutPassthrough(t *testing.T)
 	}
 }
 
+func TestTransientCooldownWritesRetryAfterWithoutPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const model = "transient-model"
+	next := time.Now().Add(30 * time.Second)
+	auth := &coreauth.Auth{
+		ID: "transient-auth",
+		ModelStates: map[string]*coreauth.ModelState{
+			model: {
+				Status:         coreauth.StatusError,
+				Unavailable:    true,
+				NextRetryAfter: next,
+			},
+		},
+	}
+	_, errPick := (&coreauth.FillFirstSelector{}).Pick(context.Background(), "traecli", model, coreexecutor.Options{}, []*coreauth.Auth{auth})
+	if errPick == nil {
+		t.Fatal("Pick() error = nil")
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler := NewBaseAPIHandlers(nil, nil)
+	handler.WriteErrorResponse(c, executionErrorMessage(errPick))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if got := recorder.Header().Get("Retry-After"); got == "" {
+		t.Fatal("Retry-After = empty")
+	}
+}
+
+func TestQuotaCooldownWritesRetryAfterWithoutPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const model = "quota-model"
+	next := time.Now().Add(30 * time.Second)
+	auth := &coreauth.Auth{
+		ID: "quota-auth",
+		ModelStates: map[string]*coreauth.ModelState{
+			model: {
+				Status:         coreauth.StatusError,
+				Unavailable:    true,
+				NextRetryAfter: next,
+				Quota: coreauth.QuotaState{
+					Exceeded:      true,
+					NextRecoverAt: next,
+				},
+			},
+		},
+	}
+	_, errPick := (&coreauth.FillFirstSelector{}).Pick(context.Background(), "traecli", model, coreexecutor.Options{}, []*coreauth.Auth{auth})
+	if errPick == nil {
+		t.Fatal("Pick() error = nil")
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler := NewBaseAPIHandlers(nil, nil)
+	handler.WriteErrorResponse(c, executionErrorMessage(errPick))
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+	}
+	if got := recorder.Header().Get("Retry-After"); got == "" {
+		t.Fatal("Retry-After = empty")
+	}
+}
+
 func TestWriteErrorResponseHomeBusyNormalAndStreamHeaders(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "normal", true: "stream"}[stream], func(t *testing.T) {
